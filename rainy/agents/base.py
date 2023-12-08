@@ -19,12 +19,12 @@ class EpisodeResult(NamedTuple):
     length: np.int32
 
     def __repr__(self) -> str:
-        return 'Result: reward: {}, length: {}'.format(self.reward, self.length)
+        return "Result: reward: {}, length: {}".format(self.reward, self.length)
 
 
 class Agent(ABC):
-    """Children must call super().__init__(config) first
-    """
+    """Children must call super().__init__(config) first"""
+
     def __init__(self, config: Config) -> None:
         self.config = config
         self.logger = config.logger
@@ -36,22 +36,20 @@ class Agent(ABC):
     def members_to_save(self) -> Tuple[str, ...]:
         """Here you can specify members you want to save.
 
-    Examples::
-        def members_to_save(self):
-            return "net", "target"
+        Examples::
+            def members_to_save(self):
+                return "net", "target"
         """
         pass
 
     @abstractmethod
     def train_episodes(self, max_steps: int) -> Iterable[List[EpisodeResult]]:
-        """Train the agent.
-        """
+        """Train the agent."""
         pass
 
     @abstractmethod
     def eval_action(self, state: Array) -> Action:
-        """Return the best action according to training results.
-        """
+        """Return the best action according to training results."""
         pass
 
     @property
@@ -69,16 +67,14 @@ class Agent(ABC):
         self.loss_stat.update(kwargs)
         if self.update_steps % self.config.loss_log_freq == 0:
             d = self.loss_stat.report_and_reset()
-            d['update-steps'] = self.update_steps
-            self.logger.exp('loss', d)
+            d["update-steps"] = self.update_steps
+            self.logger.exp("loss", d)
 
     def close(self) -> None:
         self.env.close()
 
     def __eval_episode(
-            self,
-            select_action: Callable[[Array], Action],
-            render: bool
+        self, select_action: Callable[[Array], Action], render: bool
     ) -> Tuple[EpisodeResult, EnvExt]:
         total_reward = 0.0
         steps = 0
@@ -100,15 +96,15 @@ class Agent(ABC):
                 return (res, env)
 
     def _result(
-            self,
-            done: bool,
-            info: dict,
-            total_reward: float,
-            episode_length: int,
+        self,
+        done: bool,
+        info: dict,
+        total_reward: float,
+        episode_length: int,
     ) -> Optional[EpisodeResult]:
         if self.env.use_reward_monitor:
-            if 'episode' in info:
-                return EpisodeResult(info['episode']['r'], info['episode']['l'])
+            if "episode" in info:
+                return EpisodeResult(info["episode"]["r"], info["episode"]["l"])
         elif done:
             return EpisodeResult(total_reward, episode_length)
         return None
@@ -116,11 +112,13 @@ class Agent(ABC):
     def random_episode(self, render: bool = False) -> EpisodeResult:
         def act(_state) -> Action:
             return self.config.eval_env.spec.random_action()
+
         return self.__eval_episode(act, render)[0]
 
     def random_and_save(self, fname: str, render: bool = False) -> EpisodeResult:
         def act(_state) -> Action:
             return self.config.eval_env.spec.random_action()
+
         res, env = self.__eval_episode(act, render)
         env.save_history(fname)
         return res
@@ -133,19 +131,49 @@ class Agent(ABC):
         env.save_history(fname)
         return res
 
+    def gen_episode(self):
+        total_reward = 0.0
+        steps = 0
+        env = self.config.eval_env
+        if self.config.seed is not None:
+            env.seed(self.config.seed)
+        state = env.reset()
+        res = {
+            "states": [],
+            "actions": [],
+            "rewards": [],
+            "is_terminal": [],
+        }
+        done = False
+        while not done:
+            state = env.extract(state)
+            action = self.eval_action(state)
+            state, reward, done, info = env.step(action)
+            total_reward += reward
+
+            # res["state"].append(env.unwrapped.state_to_image(state).tolist())
+            res["states"].append(state.__str__())
+            res["actions"].append(action.tolist())
+            res["rewards"].append(reward)
+            res["is_terminal"].append(done)
+
+            self.eval_reset()
+            steps += 1
+        return res
+
     def save(self, filename: str) -> None:
         save_dict = {}
         for member_str in self.members_to_save():
             value = getattr(self, member_str)
             if isinstance(value, nn.DataParallel):
                 save_dict[member_str] = value.module.state_dict()
-            elif hasattr(value, 'state_dict'):
+            elif hasattr(value, "state_dict"):
                 save_dict[member_str] = value.state_dict()
             else:
                 save_dict[member_str] = value
         log_dir = self.config.logger.log_dir
         if log_dir is None:
-            log_dir = Path('.')
+            log_dir = Path(".")
         torch.save(save_dict, log_dir.joinpath(filename))
 
     def load(self, filename: str) -> None:
@@ -157,12 +185,12 @@ class Agent(ABC):
             elif member_str in saved_dict:
                 saved_item = saved_dict[member_str]
             else:
-                warnings.warn('Member {} wasn\'t loaded'.format(member_str))
+                warnings.warn("Member {} wasn't loaded".format(member_str))
                 continue
             mem = getattr(self, member_str)
             if isinstance(mem, nn.DataParallel):
                 mem.module.load_state_dict(saved_item)
-            elif hasattr(mem, 'state_dict'):
+            elif hasattr(mem, "state_dict"):
                 mem.load_state_dict(saved_item)
             else:
                 setattr(self, member_str, saved_item)
@@ -201,8 +229,9 @@ class OneStepAgent(Agent, Generic[State]):
 class NStepParallelAgent(Agent, Generic[State]):
     def __init__(self, config: Config) -> None:
         super().__init__(config)
-        self.storage: RolloutStorage[State] = \
-            RolloutStorage(config.nsteps, config.nworkers, config.device)
+        self.storage: RolloutStorage[State] = RolloutStorage(
+            config.nsteps, config.nworkers, config.device
+        )
         self.rewards = np.zeros(config.nworkers, dtype=np.float32)
         self.episode_length = np.zeros(config.nworkers, dtype=np.int)
         self.episode_results: List[EpisodeResult] = []
@@ -210,9 +239,9 @@ class NStepParallelAgent(Agent, Generic[State]):
         self.eval_rnns: RnnState = DummyRnn.DUMMY_STATE
 
     def eval_parallel(
-            self,
-            n: Optional[int] = None,
-            entropy: Optional[Array[float]] = None,
+        self,
+        n: Optional[int] = None,
+        entropy: Optional[Array[float]] = None,
     ) -> List[EpisodeResult]:
         reserved = (
             copy.deepcopy(self.rewards),
@@ -245,9 +274,9 @@ class NStepParallelAgent(Agent, Generic[State]):
 
     @abstractmethod
     def eval_action_parallel(
-            self,
-            states: Array,
-            ent: Optional[Array[float]] = None,
+        self,
+        states: Array,
+        ent: Optional[Array[float]] = None,
     ) -> Array[Action]:
         pass
 
@@ -264,11 +293,15 @@ class NStepParallelAgent(Agent, Generic[State]):
 
     def report_reward(self, done: Array[bool], info: Array[dict]) -> None:
         if self.penv.use_reward_monitor:
-            for i in filter(lambda i: 'episode' in i, info):
-                self.episode_results.append(EpisodeResult(i['episode']['r'], i['episode']['l']))
+            for i in filter(lambda i: "episode" in i, info):
+                self.episode_results.append(
+                    EpisodeResult(i["episode"]["r"], i["episode"]["l"])
+                )
         else:
             for i in filter(lambda i: done[i], range(self.config.nworkers)):  # type: ignore
-                self.episode_results.append(EpisodeResult(self.rewards[i], self.episode_length[i]))
+                self.episode_results.append(
+                    EpisodeResult(self.rewards[i], self.episode_length[i])
+                )
                 self.rewards[i] = 0.0
                 self.episode_length[i] = 0
 
